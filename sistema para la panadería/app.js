@@ -77,7 +77,6 @@ function loadState() {
     if (!Array.isArray(initial.users) || !Array.isArray(initial.products)) {
       throw new Error("Los datos guardados no tienen el formato esperado.");
     }
-    initial.activeUser = null;
     return initial;
   } catch (error) {
     try {
@@ -786,32 +785,39 @@ function closeShiftForm() {
 }
 
 function userForm() {
-  formModal("Nuevo empleado", [
-    field("Nombre y apellido", "name", "", { required: true, maxlength: 50 }),
+  formModal("Nuevo acceso de empleado", [
+    field("Nombre y apellido del empleado", "name", "", { required: true, maxlength: 50, help: "Se usará también como nombre de usuario para el inicio de sesión." }),
     field("Teléfono", "phone", "", { maxlength: 20 }),
     positionField("", employeeAccessPositions),
     field("Sector", "sector", "", { required: true, maxlength: 50 }),
     field("Contraseña", "password", "", { required: true, type: "password", minlength: 8, help: "Mínimo 8 caracteres." })
   ], async values => {
     const employeeName = values.name.trim().replace(/\s+/g, " ");
-    const username = values.username.trim().replace(/\s+/g, " ");
-    if (!username) throw new Error("Ingresá un nombre de usuario.");
-    if (state.users.some(user => normalizeIdentity(user.username) === normalizeIdentity(username))) {
-      throw new Error("Ese nombre de usuario ya está en uso.");
+    if (!employeeName) throw new Error("Ingresá el nombre y apellido del empleado.");
+
+    // Se asigna el nombre y apellido como nombre de usuario
+    const username = employeeName;
+    const normalizedName = normalizeIdentity(employeeName);
+
+    if (state.users.some(user => normalizeIdentity(user.username) === normalizedName)) {
+      throw new Error("Ya existe un acceso registrado con ese nombre y apellido.");
     }
+
     const position = values.position.trim().replace(/\s+/g, " ");
     const role = roleForPosition[position];
     if (!role) throw new Error("Este puesto no tiene acceso al sistema. Registralo como empleado sin acceso.");
     if (role === "dueño" && state.users.some(user => user.role === "dueño")) {
       throw new Error("Ya existe una cuenta con puesto Dueño. No se pueden crear más usuarios con ese puesto.");
     }
-    const normalizedName = normalizeIdentity(employeeName);
+
     const normalizedPosition = normalizeIdentity(position);
     if (state.users.some(user => normalizeIdentity(user.name) === normalizedName && normalizeIdentity(positionForUser(user)) === normalizedPosition)) {
       throw new Error("Ya existe un acceso con ese nombre y puesto.");
     }
+
     const salt = crypto.getRandomValues(new Uint8Array(16)).join("-");
     const passwordHash = await hashPassword(values.password, salt);
+
     let employee = state.employees.find(item =>
       normalizeIdentity(item.name) === normalizedName &&
       normalizeIdentity(item.position) === normalizedPosition &&
@@ -824,9 +830,22 @@ function userForm() {
       employee = { id: uid("empleado"), name: employeeName, phone: values.phone.trim(), position, sector: values.sector.trim() };
       state.employees.push(employee);
     }
-    state.users.push({ id: uid("user"), employeeId: employee.id, username, name: employee.name, position: employee.position, role, salt, passwordHash, passwordAlgorithm: "PBKDF2" });
-    if (!saveState("Empleado agregado.")) return;
-    closeModal(); render();
+
+    state.users.push({ 
+      id: uid("user"), 
+      employeeId: employee.id, 
+      username, 
+      name: employee.name, 
+      position: employee.position, 
+      role, 
+      salt, 
+      passwordHash, 
+      passwordAlgorithm: "PBKDF2" 
+    });
+
+    if (!saveState("Acceso para el empleado creado exitosamente.")) return;
+    closeModal(); 
+    render();
   });
 }
 
@@ -1215,8 +1234,17 @@ state = loadState();
 if (migrateUserRoles(state)) saveState();
 setupFormHandler();
 if (!storageProblem) {
-  if (!hasAdminAccount(state)) renderSetup();
-  ensureAdminAccount().then(renderLogin).catch(error => {
+  if (!hasAdminAccount(state)) {
+    renderSetup();
+  }
+  ensureAdminAccount().then(() => {
+    // Si ya hay un usuario con sesión activa en localStorage, renderiza directamente el panel principal
+    if (state.activeUser && activeUser()) {
+      render();
+    } else {
+      renderLogin();
+    }
+  }).catch(error => {
     storageProblem = `No se pudo preparar la cuenta Admin: ${error.message}`;
     renderSetup();
   });
